@@ -20,19 +20,13 @@ const (
 	// DefaultSparkConfDir is the default directory for Spark configuration files if not specified.
 	// This directory is where the Spark ConfigMap is mounted in the driver and executor containers.
 	DefaultSparkConfDir = "/etc/spark/conf"
-	// SparkConfigMapNamePrefix is the name prefix of the Spark ConfigMap created from the directory
-	// in the submission client container specified by SparkApplicationSpec.SparkConfDir.
-	SparkConfigMapNamePrefix = "spark-config-map"
 	// SparkConfigMapVolumeName is the name of the ConfigMap volume of Spark configuration files.
-	SparkConfigMapVolumeName = "spark-config-map-volume"
+	SparkConfigMapVolumeName = "spark-configmap-volume"
 	// DefaultHadoopConfDir is the default directory for Spark configuration files if not specified.
 	// This directory is where the Hadoop ConfigMap is mounted in the driver and executor containers.
 	DefaultHadoopConfDir = "/etc/hadoop/conf"
-	// HadoopConfigMapNamePrefix is the name prefix of the Hadoop ConfigMap created from the directory
-	// in the submission client container specified by.
-	HadoopConfigMapNamePrefix = "hadoop-config-map"
 	// HadoopConfigMapVolumeName is the name of the ConfigMap volume of Hadoop configuration files.
-	HadoopConfigMapVolumeName = "hadoop-config-map-volume"
+	HadoopConfigMapVolumeName = "hadoop-configmap-volume"
 	// SparkConfDirEnvVar is the environment variable to add to the driver and executor Pods that point
 	// to the directory where the Spark ConfigMap is mounted.
 	SparkConfDirEnvVar = "SPARK_CONF_DIR"
@@ -47,36 +41,86 @@ const (
 	// SparkConfigMapAnnotation is the name of the annotation added to the driver and executor Pods
 	// that indicates the presence of a Spark ConfigMap that should be mounted to the driver and
 	// executor Pods with the environment variable SPARK_CONF_DIR set to point to the mount path.
-	SparkConfigMapAnnotation = LabelAnnotationPrefix + "sparkConfigMap"
+	SparkConfigMapAnnotation = LabelAnnotationPrefix + "spark-configmap"
 	// HadoopConfigMapAnnotation is the name of the annotation added to the driver and executor Pods
 	// that indicates the presence of a Hadoop ConfigMap that should be mounted to the driver and
 	// executor Pods with the environment variable HADOOP_CONF_DIR set to point to the mount path.
-	HadoopConfigMapAnnotation = LabelAnnotationPrefix + "hadoopConfigMap"
-	// GeneralConfigMapsAnnotationPrefix is the name of the general annotation that specifies the name
+	HadoopConfigMapAnnotation = LabelAnnotationPrefix + "hadoop-configmap"
+	// GeneralConfigMapsAnnotationPrefix is the prefix of general annotations that specifies the name
 	// and mount paths of additional ConfigMaps to be mounted.
-	GeneralConfigMapsAnnotationPrefix = LabelAnnotationPrefix + "configMap."
-	// GeneralSecretsAnnotationPrefix is the name of the general annotation that specifies the name,
-	// mount path, and type of secrets to be mounted.
-	GeneralSecretsAnnotationPrefix = LabelAnnotationPrefix + "secret."
-	// GCPServiceAccountSecretAnnotationPrefix is the prefix of annotation that specifies a GCP service
-	// account secret to be mounted. GCP service account secret needs the special handling of also
-	// setting the environment variable GOOGLE_APPLICATION_CREDENTIALS.
-	GCPServiceAccountSecretAnnotationPrefix = LabelAnnotationPrefix + "GCPServiceAccount."
+	GeneralConfigMapsAnnotationPrefix = LabelAnnotationPrefix + "configmap."
+	// VolumesAnnotationPrefix is the prefix of annotations that specify a Volume.
+	VolumesAnnotationPrefix = LabelAnnotationPrefix + "volumes."
+	// VolumeMountsAnnotationPrefix is the prefix of annotations that specify a VolumeMount.
+	VolumeMountsAnnotationPrefix = LabelAnnotationPrefix + "volumemounts."
 	// OwnerReferenceAnnotation is the name of the annotation added to the driver and executor Pods
 	// that specifies the OwnerReference of the owning SparkApplication.
-	OwnerReferenceAnnotation = LabelAnnotationPrefix + "ownerReference"
-	// SparkAppIDLabel is the name of the label used to group API objects, e.g., Spark UI service, Pods,
-	// ConfigMaps, etc., belonging to the same Spark application.
-	SparkAppIDLabel = LabelAnnotationPrefix + "appId"
+	OwnerReferenceAnnotation = LabelAnnotationPrefix + "ownerreference"
+	// AffinityAnnotation is the name of the annotation added to the driver and executor Pods that
+	// specifies the value of the Pod Affinity.
+	AffinityAnnotation = LabelAnnotationPrefix + "affinity"
+	// SparkAppNameLabel is the name of the label for the SparkApplication object name.
+	SparkAppNameLabel = LabelAnnotationPrefix + "app-name"
+	// ScheduledSparkAppNameLabel is the name of the label for the ScheduledSparkApplication object name.
+	ScheduledSparkAppNameLabel = LabelAnnotationPrefix + "scheduled-app-name"
+	// LaunchedBySparkOperatorLabel is a label on Spark pods launched through the Spark Operator.
+	LaunchedBySparkOperatorLabel = LabelAnnotationPrefix + "launched-by-spark-operator"
+	// TolerationsAnnotationPrefix is the prefix of annotations that specify a Toleration.
+	TolerationsAnnotationPrefix = LabelAnnotationPrefix + "tolerations."
+	// SparkApplicationSelectorLabel is the AppID set by the spark-distribution on the driver/executors Pods.
+	SparkApplicationSelectorLabel = "spark-app-selector"
+	// SparkRoleLabel is the driver/executor label set by the operator/spark-distribution on the driver/executors Pods.
+	SparkRoleLabel = "spark-role"
+	// SparkDriverRole is the value of the spark-role label for the driver.
+	SparkDriverRole = "driver"
+	// SparkExecutorRole is the value of the spark-role label for the executors.
+	SparkExecutorRole = "executor"
+	// SubmissionIDLabel is the label that records the submission ID of the current run of an application.
+	SubmissionIDLabel = LabelAnnotationPrefix + "submission-id"
 )
 
 const (
-	// DriverEnvVarConfigKeyPrefix is the Spark configuration prefix for setting environment variables
+	// SparkAppNameKey is the configuration property for application name.
+	SparkAppNameKey = "spark.app.name"
+	// SparkAppNamespaceKey is the configuration property for application namespace.
+	SparkAppNamespaceKey = "spark.kubernetes.namespace"
+	// SparkContainerImageKey is the configuration property for specifying the unified container image.
+	SparkContainerImageKey = "spark.kubernetes.container.image"
+	// SparkImagePullSecretKey is the configuration property for specifying the comma-separated list of image-pull
+	// secrets.
+	SparkImagePullSecretKey = "spark.kubernetes.container.image.pullSecrets"
+	// SparkContainerImagePullPolicyKey is the configuration property for specifying the container image pull policy.
+	SparkContainerImagePullPolicyKey = "spark.kubernetes.container.image.pullPolicy"
+	// SparkNodeSelectorKeyPrefix is the configuration property prefix for specifying node selector for the pods.
+	SparkNodeSelectorKeyPrefix = "spark.kubernetes.node.selector."
+	// SparkDriverContainerImageKey is the configuration property for specifying a custom driver container image.
+	SparkDriverContainerImageKey = "spark.kubernetes.driver.container.image"
+	// SparkExecutorContainerImageKey is the configuration property for specifying a custom executor container image.
+	SparkExecutorContainerImageKey = "spark.kubernetes.executor.container.image"
+	// SparkDriverCoreLimitKey is the configuration property for specifying the hard CPU limit for the driver pod.
+	SparkDriverCoreLimitKey = "spark.kubernetes.driver.limit.cores"
+	// SparkExecutorCoreLimitKey is the configuration property for specifying the hard CPU limit for the executor pods.
+	SparkExecutorCoreLimitKey = "spark.kubernetes.executor.limit.cores"
+	// SparkExecutorCoreRequestKey is the configuration property for specifying the physical CPU request for executors.
+	SparkExecutorCoreRequestKey = "spark.kubernetes.executor.request.cores"
+	// SparkDriverSecretKeyPrefix is the configuration property prefix for specifying secrets to be mounted into the
+	// driver.
+	SparkDriverSecretKeyPrefix = "spark.kubernetes.driver.secrets."
+	// SparkExecutorSecretKeyPrefix is the configuration property prefix for specifying secrets to be mounted into the
+	// executors.
+	SparkExecutorSecretKeyPrefix = "spark.kubernetes.executor.secrets."
+	// SparkDriverSecretKeyRefKeyPrefix is the configuration property prefix for specifying environment variables
+	// from SecretKeyRefs for the driver.
+	SparkDriverSecretKeyRefKeyPrefix = "spark.kubernetes.driver.secretKeyRef."
+	// SparkExecutorSecretKeyRefKeyPrefix is the configuration property prefix for specifying environment variables
+	// from SecretKeyRefs for the executors.
+	SparkExecutorSecretKeyRefKeyPrefix = "spark.kubernetes.executor.secretKeyRef."
+	// SparkDriverEnvVarConfigKeyPrefix is the Spark configuration prefix for setting environment variables
 	// into the driver.
-	DriverEnvVarConfigKeyPrefix = "spark.kubernetes.driverEnv."
-	// ExecutorEnvVarConfigKeyPrefix is the Spark configuration prefix for setting environment variables
+	SparkDriverEnvVarConfigKeyPrefix = "spark.kubernetes.driverEnv."
+	// SparkExecutorEnvVarConfigKeyPrefix is the Spark configuration prefix for setting environment variables
 	// into the executor.
-	ExecutorEnvVarConfigKeyPrefix = "spark.executorEnv."
+	SparkExecutorEnvVarConfigKeyPrefix = "spark.executorEnv."
 	// SparkDriverAnnotationKeyPrefix is the Spark configuration key prefix for annotations on the driver Pod.
 	SparkDriverAnnotationKeyPrefix = "spark.kubernetes.driver.annotation."
 	// SparkExecutorAnnotationKeyPrefix is the Spark configuration key prefix for annotations on the executor Pods.
@@ -87,4 +131,156 @@ const (
 	SparkExecutorLabelKeyPrefix = "spark.kubernetes.executor.label."
 	// SparkDriverPodNameKey is the Spark configuration key for driver pod name.
 	SparkDriverPodNameKey = "spark.kubernetes.driver.pod.name"
+	// SparkDriverServiceAccountName is the Spark configuration key for specifying name of the Kubernetes service
+	// account used by the driver pod.
+	SparkDriverServiceAccountName = "spark.kubernetes.authenticate.driver.serviceAccountName"
+	// SparkInitContainerImage is the Spark configuration key for specifying a custom init-container image.
+	SparkInitContainerImage = "spark.kubernetes.initContainer.image"
+	// SparkJarsDownloadDir is the Spark configuration key for specifying the download path in the driver and
+	// executors for remote jars.
+	SparkJarsDownloadDir = "spark.kubernetes.mountDependencies.jarsDownloadDir"
+	// SparkFilesDownloadDir is the Spark configuration key for specifying the download path in the driver and
+	// executors for remote files.
+	SparkFilesDownloadDir = "spark.kubernetes.mountDependencies.filesDownloadDir"
+	// SparkDownloadTimeout is the Spark configuration key for specifying the timeout in seconds of downloading
+	// remote dependencies.
+	SparkDownloadTimeout = "spark.kubernetes.mountDependencies.timeout"
+	// SparkMaxSimultaneousDownloads is the Spark configuration key for specifying the maximum number of remote
+	// dependencies to download.
+	SparkMaxSimultaneousDownloads = "spark.kubernetes.mountDependencies.maxSimultaneousDownloads"
+	// SparkWaitAppCompletion is the Spark configuration key for specifying whether to wait for application to complete.
+	SparkWaitAppCompletion = "spark.kubernetes.submission.waitAppCompletion"
+	// SparkPythonVersion is the Spark configuration key for specifying python version used.
+	SparkPythonVersion = "spark.kubernetes.pyspark.pythonVersion"
+	// SparkMemoryOverheadFactor is the Spark configuration key for specifying memory overhead factor used for Non-JVM memory.
+	SparkMemoryOverheadFactor = "spark.kubernetes.memoryOverheadFactor"
+	// SparkDriverJavaOptions is the Spark configuration key for a string of extra JVM options to pass to driver.
+	SparkDriverJavaOptions = "spark.driver.extraJavaOptions"
+	// SparkExecutorJavaOptions is the Spark configuration key for a string of extra JVM options to pass to executors.
+	SparkExecutorJavaOptions = "spark.executor.extraJavaOptions"
 )
+
+const (
+	// GoogleApplicationCredentialsEnvVar is the environment variable used by the
+	// Application Default Credentials mechanism. More details can be found at
+	// https://developers.google.com/identity/protocols/application-default-credentials.
+	GoogleApplicationCredentialsEnvVar = "GOOGLE_APPLICATION_CREDENTIALS"
+	// ServiceAccountJSONKeyFileName is the assumed name of the service account
+	// Json key file. This name is added to the service account secret mount path to
+	// form the path to the Json key file referred to by GOOGLE_APPLICATION_CREDENTIALS.
+	ServiceAccountJSONKeyFileName = "key.json"
+	// HadoopTokenFileLocationEnvVar is the environment variable for specifying the location
+	// where the file storing the Hadoop delegation token is located.
+	HadoopTokenFileLocationEnvVar = "HADOOP_TOKEN_FILE_LOCATION"
+	// HadoopDelegationTokenFileName is the assumed name of the file storing the Hadoop
+	// delegation token. This name is added to the delegation token secret mount path to
+	// form the path to the file referred to by HADOOP_TOKEN_FILE_LOCATION.
+	HadoopDelegationTokenFileName = "hadoop.token"
+)
+
+const (
+	// PrometheusConfigMapNameSuffix is the name prefix of the Prometheus ConfigMap.
+	PrometheusConfigMapNameSuffix = "prom-conf"
+	// PrometheusConfigMapMountPath is the mount path of the Prometheus ConfigMap.
+	PrometheusConfigMapMountPath = "/etc/metrics/conf"
+)
+
+// DefaultMetricsProperties is the default content of metrics.properties.
+const DefaultMetricsProperties = `
+*.sink.jmx.class=org.apache.spark.metrics.sink.JmxSink
+driver.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+executor.source.jvm.class=org.apache.spark.metrics.source.JvmSource`
+
+// DefaultPrometheusConfiguration is the default content of prometheus.yaml.
+const DefaultPrometheusConfiguration = `
+lowercaseOutputName: true
+attrNameSnakeCase: true
+rules:
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.(BlockManager|DAGScheduler|jvm)\.(\S+)><>Value
+    name: spark_driver_$3_$4
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.(\S+)\.StreamingMetrics\.streaming\.(\S+)><>Value
+    name: spark_streaming_driver_$4
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.spark\.streaming\.(\S+)\.(\S+)><>Value
+    name: spark_structured_streaming_driver_$4
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      query_name: "$3"
+  - pattern: metrics<name=(\S+)\.(\S+)\.(\S+)\.executor\.(\S+)><>Value
+    name: spark_executor_$4
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      executor_id: "$3"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.DAGScheduler\.(.*)><>Count
+    name: spark_driver_DAGScheduler_$3_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.HiveExternalCatalog\.(.*)><>Count
+    name: spark_driver_HiveExternalCatalog_$3_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.CodeGenerator\.(.*)><>Count
+    name: spark_driver_CodeGenerator_$3_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.LiveListenerBus\.(.*)><>Count
+    name: spark_driver_LiveListenerBus_$3_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.driver\.LiveListenerBus\.(.*)><>Value
+    name: spark_driver_LiveListenerBus_$3
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+  - pattern: metrics<name=(\S+)\.(\S+)\.(.*)\.executor\.(.*)><>Count
+    name: spark_executor_$4_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      executor_id: "$3"
+  - pattern: metrics<name=(\S+)\.(\S+)\.([0-9]+)\.(jvm|NettyBlockTransfer)\.(.*)><>Value
+    name: spark_executor_$4_$5
+    type: GAUGE
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      executor_id: "$3"
+  - pattern: metrics<name=(\S+)\.(\S+)\.([0-9]+)\.HiveExternalCatalog\.(.*)><>Count
+    name: spark_executor_HiveExternalCatalog_$4_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      executor_id: "$3"
+  - pattern: metrics<name=(\S+)\.(\S+)\.([0-9]+)\.CodeGenerator\.(.*)><>Count
+    name: spark_executor_CodeGenerator_$4_count
+    type: COUNTER
+    labels:
+      app_namespace: "$1"
+      app_id: "$2"
+      executor_id: "$3"
+`
+
+// DefaultPrometheusJavaAgentPort is the default port used by the Prometheus JMX exporter.
+const DefaultPrometheusJavaAgentPort int32 = 8090

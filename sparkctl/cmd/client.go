@@ -17,16 +17,42 @@ limitations under the License.
 package cmd
 
 import (
-	crdclientset "k8s.io/spark-on-k8s-operator/pkg/client/clientset/versioned"
-	"k8s.io/client-go/tools/clientcmd"
+	"os"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io/v1beta1"
+	crdclientset "github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/client/clientset/versioned"
 )
 
 func buildConfig(kubeConfig string) (*rest.Config, error) {
-	if kubeConfig != "" {
-		return clientcmd.BuildConfigFromFlags("", kubeConfig)
+	// Check if kubeConfig exist
+	if _, err := os.Stat(kubeConfig); os.IsNotExist(err) {
+		// Try InclusterConfig for sparkctl running in a pod
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, err
+		}
+
+		return config, nil
 	}
-	return rest.InClusterConfig()
+
+	return clientcmd.BuildConfigFromFlags("", kubeConfig)
+}
+
+func getKubeClient() (clientset.Interface, error) {
+	config, err := buildConfig(KubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	return getKubeClientForConfig(config)
+}
+
+func getKubeClientForConfig(config *rest.Config) (clientset.Interface, error) {
+	return clientset.NewForConfig(config)
 }
 
 func getSparkApplicationClient() (crdclientset.Interface, error) {
@@ -34,5 +60,17 @@ func getSparkApplicationClient() (crdclientset.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
+	return getSparkApplicationClientForConfig(config)
+}
+
+func getSparkApplicationClientForConfig(config *rest.Config) (crdclientset.Interface, error) {
 	return crdclientset.NewForConfig(config)
+}
+
+func getSparkApplication(name string, crdClientset crdclientset.Interface) (*v1beta1.SparkApplication, error) {
+	app, err := crdClientset.SparkoperatorV1beta1().SparkApplications(Namespace).Get(name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return app, nil
 }

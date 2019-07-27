@@ -17,42 +17,75 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
+	"os"
+
+	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
-	"github.com/golang/glog"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io/v1alpha1"
+
+	"github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io/v1beta1"
+	crdclientset "github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/client/clientset/versioned"
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
+	Use:   "status <name>",
 	Short: "Check status of a SparkApplication",
 	Long:  `Check status of a SparkApplication with a given name`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 {
-			glog.Fatal(rootCmd.Usage())
+			fmt.Fprintln(os.Stderr, "must specify a SparkApplication name")
+			return
 		}
 
-		if err := doStatus(args[0]); err != nil {
-			glog.Fatalf("failed to check status of SparkApplication %s: %v", args[0], err)
+		crdClientset, err := getSparkApplicationClient()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to get SparkApplication client: %v\n", err)
+			return
+		}
+
+		if err := doStatus(args[0], crdClientset); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to check status of SparkApplication %s: %v\n", args[0], err)
 		}
 	},
 }
 
-func doStatus(name string) error {
-	clientset, err := getSparkApplicationClient()
+func doStatus(name string, crdClientset crdclientset.Interface) error {
+	app, err := getSparkApplication(name, crdClientset)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get SparkApplication %s: %v", name, err)
 	}
 
-	app, err := clientset.SparkoperatorV1alpha1().SparkApplications(Namespace).Get(name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
 	printStatus(app)
 
 	return nil
 }
 
-func printStatus(app *v1alpha1.SparkApplication) {
+func printStatus(app *v1beta1.SparkApplication) {
+	fmt.Println("application state:")
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"State", "Submission Age", "Completion Age", "Driver Pod", "Driver UI", "SubmissionAttempts", "ExecutionAttempts"})
+	table.Append([]string{
+		string(app.Status.AppState.State),
+		getSinceTime(app.Status.LastSubmissionAttemptTime),
+		getSinceTime(app.Status.TerminationTime),
+		formatNotAvailable(app.Status.DriverInfo.PodName),
+		formatNotAvailable(app.Status.DriverInfo.WebUIAddress),
+		fmt.Sprintf("%v", app.Status.SubmissionAttempts),
+		fmt.Sprintf("%v", app.Status.ExecutionAttempts),
+	})
+	table.Render()
 
+	if len(app.Status.ExecutorState) > 0 {
+		fmt.Println("executor state:")
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetHeader([]string{"Executor Pod", "State"})
+		for executorPod, state := range app.Status.ExecutorState {
+			table.Append([]string{executorPod, string(state)})
+		}
+		table.Render()
+	}
+
+	if app.Status.AppState.ErrorMessage != "" {
+		fmt.Printf("\napplication error message: %s\n", app.Status.AppState.ErrorMessage)
+	}
 }

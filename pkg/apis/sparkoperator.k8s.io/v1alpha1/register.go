@@ -20,8 +20,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io"
+
+	"github.com/GoogleCloudPlatform/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io"
 )
+
+const Version = "v1alpha1"
 
 var (
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
@@ -29,11 +32,7 @@ var (
 )
 
 // SchemeGroupVersion is the group version used to register these objects.
-var SchemeGroupVersion = schema.GroupVersion{Group: sparkoperator.GroupName, Version: "v1alpha1"}
-
-func init() {
-	SchemeBuilder.Register(addDefaultingFunc)
-}
+var SchemeGroupVersion = schema.GroupVersion{Group: sparkoperator.GroupName, Version: Version}
 
 // Resource takes an unqualified resource and returns a Group-qualified GroupResource.
 func Resource(resource string) schema.GroupResource {
@@ -45,11 +44,9 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&SparkApplication{},
 		&SparkApplicationList{},
+		&ScheduledSparkApplication{},
+		&ScheduledSparkApplicationList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
-}
-
-func addDefaultingFunc(scheme *runtime.Scheme) error {
-	return RegisterDefaults(scheme)
 }

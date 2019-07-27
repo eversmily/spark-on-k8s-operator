@@ -16,6 +16,7 @@ limitations under the License.
 
 package v1alpha1
 
+// SetSparkApplicationDefaults sets default values for certain fields of a SparkApplication.
 func SetSparkApplicationDefaults(app *SparkApplication) {
 	if app == nil {
 		return
@@ -25,8 +26,21 @@ func SetSparkApplicationDefaults(app *SparkApplication) {
 		app.Spec.Mode = ClusterMode
 	}
 
-	if app.Spec.RestartPolicy == "" {
-		app.Spec.RestartPolicy = Never
+	if app.Spec.RestartPolicy.Type == "" {
+		app.Spec.RestartPolicy.Type = Never
+	}
+
+	if app.Spec.RestartPolicy.Type != Never {
+		// Default to 5 sec if the RestartPolicy is OnFailure or Always and these values aren't specified.
+		if app.Spec.RestartPolicy.OnFailureRetryInterval == nil {
+			app.Spec.RestartPolicy.OnFailureRetryInterval = new(int64)
+			*app.Spec.RestartPolicy.OnFailureRetryInterval = 5
+		}
+
+		if app.Spec.RestartPolicy.OnSubmissionFailureRetryInterval == nil {
+			app.Spec.RestartPolicy.OnSubmissionFailureRetryInterval = new(int64)
+			*app.Spec.RestartPolicy.OnSubmissionFailureRetryInterval = 5
+		}
 	}
 
 	setDriverSpecDefaults(app.Spec.Driver)
@@ -35,26 +49,26 @@ func SetSparkApplicationDefaults(app *SparkApplication) {
 
 func setDriverSpecDefaults(spec DriverSpec) {
 	if spec.Cores == nil {
-		oneCore := "1"
-		spec.Cores = &oneCore
+		spec.Cores = new(float32)
+		*spec.Cores = 1
 	}
 	if spec.Memory == nil {
-		oneGMemory := "1g"
-		spec.Memory = &oneGMemory
+		spec.Memory = new(string)
+		*spec.Memory = "1g"
 	}
 }
 
 func setExecutorSpecDefaults(spec ExecutorSpec) {
 	if spec.Cores == nil {
-		oneCore := "1"
-		spec.Cores = &oneCore
+		spec.Cores = new(float32)
+		*spec.Cores = 1
 	}
 	if spec.Memory == nil {
-		oneGMemory := "1g"
-		spec.Memory = &oneGMemory
+		spec.Memory = new(string)
+		*spec.Memory = "1g"
 	}
 	if spec.Instances == nil {
-		one := int32(1)
-		spec.Instances = &one
+		spec.Instances = new(int32)
+		*spec.Instances = 1
 	}
 }

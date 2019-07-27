@@ -17,12 +17,21 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 )
 
-var defaultKubeConfig = os.Getenv("HOME" + "/.kube/config")
+func getKubeConfigPath() string {
+	var kubeConfigEnv = os.Getenv("KUBECONFIG")
+	if len(kubeConfigEnv) == 0 {
+		return os.Getenv("HOME") + "/.kube/config"
+	}
+	return kubeConfigEnv
+}
+
+var defaultKubeConfig = getKubeConfigPath()
 
 var Namespace string
 var KubeConfig string
@@ -30,20 +39,20 @@ var KubeConfig string
 var rootCmd = &cobra.Command{
 	Use:   "sparkctl",
 	Short: "sparkctl is the command-line tool for working with the Spark Operator",
-	Long:  ``,
-	Run: func(cmd *cobra.Command, args []string) {
-		// Do Stuff Here
-	},
+	Long: `sparkctl is the command-line tool for working with the Spark Operator. It supports creating, deleting and 
+           checking status of SparkApplication objects. It also supports fetching application logs.`,
 }
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&Namespace, "namespace", "n", "default",
 		"The namespace in which the SparkApplication is to be created")
-	rootCmd.PersistentFlags().StringVarP(&KubeConfig, "kubeconfig", "c", defaultKubeConfig,
-		"The namespace in which the SparkApplication is to be created")
-	rootCmd.AddCommand(createCmd, deleteCmd, statusCmd)
+	rootCmd.PersistentFlags().StringVarP(&KubeConfig, "kubeconfig", "k", defaultKubeConfig,
+		"The path to the local Kubernetes configuration file")
+	rootCmd.AddCommand(createCmd, deleteCmd, eventCommand, statusCmd, logCommand, listCmd, forwardCmd)
 }
 
 func Execute() {
-	rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v", err)
+	}
 }

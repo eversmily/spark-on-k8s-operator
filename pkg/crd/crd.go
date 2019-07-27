@@ -1,5 +1,5 @@
 /*
-Copyright 2017 Google LLC
+Copyright 2018 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,65 +18,51 @@ package crd
 
 import (
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io"
-	"k8s.io/spark-on-k8s-operator/pkg/apis/sparkoperator.k8s.io/v1alpha1"
 
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// CRD metadata.
-const (
-	Plural    = "sparkapplications"
-	Singular  = "sparkapplication"
-	ShortName = "sparkapp"
-	Group     = sparkoperator.GroupName
-	Version   = "v1alpha1"
-	FullName  = Plural + "." + Group
-)
-
-// CreateCRD creates a Kubernetes CustomResourceDefinition (CRD) for SparkApplication.
-// An error is returned if it fails to create the CustomResourceDefinition before it times out.
-func CreateCRD(clientset apiextensionsclient.Interface) error {
-	// The CustomResourceDefinition is not found, create it now.
-	sparkAppCrd := &apiextensionsv1beta1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: FullName,
-		},
-		Spec: apiextensionsv1beta1.CustomResourceDefinitionSpec{
-			Group:   Group,
-			Version: Version,
-			Scope:   apiextensionsv1beta1.NamespaceScoped,
-			Names: apiextensionsv1beta1.CustomResourceDefinitionNames{
-				Plural:     Plural,
-				Singular:   Singular,
-				ShortNames: []string{ShortName},
-				Kind:       reflect.TypeOf(v1alpha1.SparkApplication{}).Name(),
-			},
-		},
-	}
-	_, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Create(sparkAppCrd)
-	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			glog.Warningf("CustomResourceDefinition %s already exists", FullName)
-			return nil
-		}
+func CreateOrUpdateCRD(
+	clientset apiextensionsclient.Interface,
+	definition *apiextensionsv1beta1.CustomResourceDefinition) error {
+	existing, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Get(definition.Name,
+		metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		// Failed to get the CRD object and the failure was not because the object cannot be found.
 		return err
 	}
 
+	if err == nil && existing != nil {
+		// Update case.
+		if !equality.Semantic.DeepEqual(existing.Spec, definition.Spec) {
+			existing.Spec = definition.Spec
+			glog.Infof("Updating CustomResourceDefinition %s", definition.Name)
+			if _, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Update(existing); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Create case.
+		glog.Infof("Creating CustomResourceDefinition %s", definition.Name)
+		if _, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Create(definition); err != nil {
+			return err
+		}
+	}
+
 	// Wait for the CustomResourceDefinition to become registered.
-	err = waitForCRDEstablishment(clientset)
+	err = waitForCRDEstablishment(clientset, definition.Name)
 	// Try deleting the CustomResourceDefinition if it fails to be registered on time.
 	if err != nil {
-		deleteErr := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Delete(FullName, &metav1.DeleteOptions{})
+		deleteErr := deleteCRD(clientset, definition.Name)
 		if deleteErr != nil {
 			return errors.NewAggregate([]error{err, deleteErr})
 		}
@@ -86,19 +72,18 @@ func CreateCRD(clientset apiextensionsclient.Interface) error {
 	return nil
 }
 
-func getCRD(clientset apiextensionsclient.Interface) (*apiextensionsv1beta1.CustomResourceDefinition, error) {
-	return clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Get(FullName, metav1.GetOptions{})
-}
-
 // waitForCRDEstablishment waits for the CRD to be registered and established until it times out.
-func waitForCRDEstablishment(clientset apiextensionsclient.Interface) error {
+func waitForCRDEstablishment(clientset apiextensionsclient.Interface, name string) error {
 	return wait.Poll(500*time.Millisecond, 60*time.Second, func() (bool, error) {
-		sparkAppCrd, err := getCRD(clientset)
-		for _, cond := range sparkAppCrd.Status.Conditions {
+		crd, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Get(name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		for _, cond := range crd.Status.Conditions {
 			switch cond.Type {
 			case apiextensionsv1beta1.Established:
 				if cond.Status == apiextensionsv1beta1.ConditionTrue {
-					return true, err
+					return true, nil
 				}
 			case apiextensionsv1beta1.NamesAccepted:
 				if cond.Status == apiextensionsv1beta1.ConditionFalse {
@@ -106,6 +91,15 @@ func waitForCRDEstablishment(clientset apiextensionsclient.Interface) error {
 				}
 			}
 		}
-		return false, err
+		return false, nil
 	})
+}
+
+func deleteCRD(clientset apiextensionsclient.Interface, name string) error {
+	err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Delete(name, metav1.NewDeleteOptions(0))
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	return nil
 }
