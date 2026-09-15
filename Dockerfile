@@ -14,6 +14,65 @@
 # limitations under the License.
 #
 
-FROM liyinan926/spark-base:v2.3.0
-COPY spark-operator /usr/bin/
-ENTRYPOINT ["/user/bin/spark-operator"]
+ARG SPARK_IMAGE=docker.io/apache/spark:4.0.4@sha256:94ad730f7510002d8a1615de269f27cdeca4d4eef51657384db3fa9246b5a4d8
+
+FROM docker.io/library/golang:1.25.11@sha256:00feed335fe561979f2cdcc30a5191231977c5631fe79c40f7d3ab63b4fa222f AS builder
+
+WORKDIR /workspace
+
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    --mount=type=bind,source=go.mod,target=go.mod \
+    --mount=type=bind,source=go.sum,target=go.sum \
+    go mod download
+
+COPY . .
+
+ENV GOCACHE=/root/.cache/go-build
+
+ARG TARGETARCH
+
+# Build metadata. When unset, the Makefile derives these from the git tree
+# inside the build context, preserving the behaviour of a plain `docker build`.
+ARG VERSION=
+ARG GIT_COMMIT=
+ARG GIT_TREE_STATE=
+ARG SOURCE_DATE_EPOCH=
+
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    --mount=type=cache,target="/root/.cache/go-build" \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GO111MODULE=on \
+    make build-operator \
+      ${VERSION:+VERSION=$VERSION} \
+      ${GIT_COMMIT:+GIT_COMMIT=$GIT_COMMIT} \
+      ${GIT_TREE_STATE:+GIT_TREE_STATE=$GIT_TREE_STATE} \
+      ${SOURCE_DATE_EPOCH:+SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH}
+
+# Export-only stage. `docker build` targets the final stage by default, so this
+# is never built unless requested via --target=artifacts. CI uses it to extract
+# the exact binary that ships in the image.
+FROM scratch AS artifacts
+COPY --from=builder /workspace/bin/spark-operator /spark-operator
+
+FROM ${SPARK_IMAGE}
+
+ARG SPARK_UID=185
+
+ARG SPARK_GID=185
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y catatonit \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /etc/k8s-webhook-server/serving-certs /home/spark && \
+    chmod -R g+rw /etc/k8s-webhook-server/serving-certs && \
+    chown -R spark /etc/k8s-webhook-server/serving-certs /home/spark
+
+USER ${SPARK_UID}:${SPARK_GID}
+
+COPY --from=builder /workspace/bin/spark-operator /usr/bin/spark-operator
+
+COPY entrypoint.sh /usr/bin/
+
+ENTRYPOINT ["/usr/bin/entrypoint.sh"]

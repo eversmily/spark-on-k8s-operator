@@ -1,0 +1,534 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - release-*
+    paths:
+      - VERSION
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEMVER_PATTERN: '^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc\.([0-9]+))?$'
+  IMAGE_REGISTRY: ghcr.io
+  OPERATOR_IMAGE_REPOSITORY: ${{ github.repository }}/controller
+  KUBECTL_IMAGE_REPOSITORY: ${{ github.repository }}/kubectl
+  KUBECTL_VERSION: 1.33.2
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check whether version matches semver pattern
+        run: |
+          VERSION=$(cat VERSION)
+          if [[ ${VERSION} =~ ${SEMVER_PATTERN} ]]; then
+            echo "Version '${VERSION}' matches semver pattern."
+          else
+            echo "Version '${VERSION}' does not match semver pattern."
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Check whether chart version and appVersion matches version
+        run: |
+          VERSION=${VERSION#v}
+          CHART_VERSION=$(cat charts/spark-operator-chart/Chart.yaml | grep version | awk '{print $2}')
+          CHART_APP_VERSION=$(cat charts/spark-operator-chart/Chart.yaml | grep appVersion | awk '{print $2}')
+          if [[ ${CHART_VERSION} == ${VERSION} ]]; then
+            echo "Chart version '${CHART_VERSION}' matches version '${VERSION}'."
+          else
+            echo "Chart version '${CHART_VERSION}' does not match version '${VERSION}'."
+            exit 1
+          fi
+          if [[ ${CHART_APP_VERSION} == ${VERSION} ]]; then
+            echo "Chart appVersion '${CHART_APP_VERSION}' matches version '${VERSION}'."
+          else
+            echo "Chart appVersion '${CHART_APP_VERSION}' does not match version '${VERSION}'."
+            exit 1
+          fi
+
+      - name: Check if tag exists
+        run: |
+          git fetch --tags
+          if git tag -l | grep -q "^${VERSION}$"; then
+            echo "Tag '${VERSION}' already exists."
+            exit 1
+          else
+            echo "Tag '${VERSION}' does not exist."
+          fi
+
+  build_operator_images:
+    needs:
+      - check-release
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "ARCH=${platform#linux/}" >> $GITHUB_ENV
+
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Collect build metadata
+        run: |
+          set -euo pipefail
+          {
+            echo "BUILD_VERSION=${VERSION#v}"
+            echo "GIT_COMMIT=$(git rev-parse HEAD)"
+            echo "GIT_TREE_STATE=$([ -z "$(git status --porcelain)" ] && echo clean || echo dirty)"
+            echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)"
+          } >> "$GITHUB_ENV"
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_REGISTRY }}/${{ env.OPERATOR_IMAGE_REPOSITORY }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to container registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.BUILD_VERSION }}
+            GIT_COMMIT=${{ env.GIT_COMMIT }}
+            GIT_TREE_STATE=${{ env.GIT_TREE_STATE }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+          outputs: type=image,name=${{ env.IMAGE_REGISTRY }}/${{ env.OPERATOR_IMAGE_REPOSITORY }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export operator binary
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          platforms: ${{ matrix.platform }}
+          target: artifacts
+          build-args: |
+            VERSION=${{ env.BUILD_VERSION }}
+            GIT_COMMIT=${{ env.GIT_COMMIT }}
+            GIT_TREE_STATE=${{ env.GIT_TREE_STATE }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+          outputs: type=local,dest=${{ runner.temp }}/binary
+
+      - name: Verify exported binary matches image
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REGISTRY}/${OPERATOR_IMAGE_REPOSITORY}@${DIGEST}"
+          cid=$(docker create --platform "${{ matrix.platform }}" "${image}")
+          docker cp "${cid}:/usr/bin/spark-operator" "${RUNNER_TEMP}/from-image"
+          docker rm "${cid}"
+          exported=$(sha256sum "${RUNNER_TEMP}/binary/spark-operator" | cut -d' ' -f1)
+          from_image=$(sha256sum "${RUNNER_TEMP}/from-image" | cut -d' ' -f1)
+          echo "exported:   ${exported}"
+          echo "from image: ${from_image}"
+          [ "${exported}" = "${from_image}" ]
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Package operator binary
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/stage"
+          mkdir -p "${stage}" "${RUNNER_TEMP}/dist"
+          cp "${RUNNER_TEMP}/binary/spark-operator" "${stage}/"
+          cp LICENSE entrypoint.sh "${stage}/"
+          tar -czf "${RUNNER_TEMP}/dist/spark-operator_${VERSION}_linux_${ARCH}.tar.gz" \
+            -C "${stage}" spark-operator LICENSE entrypoint.sh
+
+      - name: Upload operator binary archive
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: binaries-operator-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${STEPS_BUILD_OUTPUTS_DIGEST}"
+          touch "/tmp/digests/${digest#sha256:}"
+        env:
+          STEPS_BUILD_OUTPUTS_DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: digests-operator-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build_kubectl_images:
+    needs:
+      - check-release
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_REGISTRY }}/${{ env.KUBECTL_IMAGE_REPOSITORY }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to container registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          file: docker/Dockerfile.kubectl
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            KUBECTL_VERSION=${{ env.KUBECTL_VERSION }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE_REGISTRY }}/${{ env.KUBECTL_IMAGE_REPOSITORY }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${STEPS_BUILD_OUTPUTS_DIGEST}"
+          touch "/tmp/digests/${digest#sha256:}"
+        env:
+          STEPS_BUILD_OUTPUTS_DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: digests-kubectl-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release_operator_images:
+    needs:
+      - build_operator_images
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_REGISTRY }}/${{ env.OPERATOR_IMAGE_REPOSITORY }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+
+      - name: Download digests
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: /tmp/digests
+          pattern: digests-operator-*
+          merge-multiple: true
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to container registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_REGISTRY}/${OPERATOR_IMAGE_REPOSITORY}@sha256:%s " *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${IMAGE_REGISTRY}/${OPERATOR_IMAGE_REPOSITORY}:${STEPS_META_OUTPUTS_VERSION}
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
+
+  release_kubectl_images:
+    needs:
+      - build_kubectl_images
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_REGISTRY }}/${{ env.KUBECTL_IMAGE_REPOSITORY }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+
+      - name: Download digests
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: /tmp/digests
+          pattern: digests-kubectl-*
+          merge-multiple: true
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to container registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_REGISTRY}/${KUBECTL_IMAGE_REPOSITORY}@sha256:%s " *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${IMAGE_REGISTRY}/${KUBECTL_IMAGE_REPOSITORY}:${STEPS_META_OUTPUTS_VERSION}
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
+
+  push_tag:
+    needs:
+      - release_operator_images
+      - release_kubectl_images
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2 # zizmor: ignore[artipacked]
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Create and push tag
+        run: |
+          git tag -a "${VERSION}" -m "Official Release ${VERSION}"
+          git push origin "${VERSION}"
+
+  draft_release:
+    needs:
+      - push_tag
+
+    permissions:
+      contents: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Read version from VERSION file
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Download operator binary archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: ${{ runner.temp }}/dist
+          pattern: binaries-operator-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dist"
+          sha256sum spark-operator_*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Verify binaries
+        run: |
+          set -euo pipefail
+          (cd "${RUNNER_TEMP}/dist" && sha256sum --check SHA256SUMS)
+
+          verify="${RUNNER_TEMP}/verify"
+          mkdir -p "${verify}"
+
+          tar -xzf "${RUNNER_TEMP}/dist/spark-operator_${VERSION}_linux_amd64.tar.gz" \
+            -C "${verify}" spark-operator
+          "${verify}/spark-operator" version
+          "${verify}/spark-operator" version | grep -qF "Git Version: ${VERSION}"
+          "${verify}/spark-operator" version | grep -qF "Git Tree State: clean"
+          "${verify}/spark-operator" --help > /dev/null
+
+          rm -f "${verify}/spark-operator"
+          tar -xzf "${RUNNER_TEMP}/dist/spark-operator_${VERSION}_linux_arm64.tar.gz" \
+            -C "${verify}" spark-operator
+          file "${verify}/spark-operator" | grep -q "ARM aarch64"
+          file "${verify}/spark-operator" | grep -q "statically linked"
+
+      - name: Get Helm version
+        id: get_helm_version
+        run: |
+          HELM_VERSION=$(grep -e '^[[:space:]]*helm.sh/helm/v3 v' test/e2e/go.mod | cut -d ' ' -f 2)
+          echo "HELM_VERSION=$HELM_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ steps.get_helm_version.outputs.HELM_VERSION }}
+
+      - name: Package Helm charts
+        run: |
+          for chart in $(ls charts); do
+            helm package charts/${chart}
+          done
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=(
+            "$VERSION"
+            --title "$VERSION"
+            --target "$GITHUB_SHA"
+            --draft
+          )
+          if [[ "$VERSION" == *rc* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}" \
+            *.tgz \
+            "${RUNNER_TEMP}"/dist/spark-operator_*.tar.gz \
+            "${RUNNER_TEMP}/dist/SHA256SUMS"

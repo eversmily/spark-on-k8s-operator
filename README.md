@@ -1,193 +1,149 @@
-[![Go Report Card](https://goreportcard.com/badge/github.com/GoogleCloudPlatform/spark-on-k8s-operator)](https://goreportcard.com/report/github.com/GoogleCloudPlatform/spark-on-k8s-operator)
+# Kubeflow Spark Operator
 
-**This is not an official Google product.**
+[![GitHub release](https://img.shields.io/github/v/release/kubeflow/spark-operator)](https://github.com/kubeflow/spark-operator/releases)
+[![Integration Test](https://github.com/kubeflow/spark-operator/actions/workflows/integration.yaml/badge.svg)](https://github.com/kubeflow/spark-operator/actions/workflows/integration.yaml)
+[![Join Slack](https://img.shields.io/badge/Join_Slack-blue?logo=slack)](https://www.kubeflow.org/docs/about/community/#kubeflow-slack-channels)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kubeflow/spark-operator)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/10524/badge)](https://www.bestpractices.dev/projects/10524)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fkubeflow%2Fspark-operator.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fkubeflow%2Fspark-operator?ref=badge_shield&issueType=license)
+
+## What is Spark Operator?
+
+The Kubernetes Operator for Apache Spark aims to make specifying and running [Spark](https://github.com/apache/spark) applications as easy and idiomatic as running other workloads on Kubernetes. It uses
+[Kubernetes custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) for specifying, running, and surfacing status of Spark applications.
+
+## Quick Start
+
+For a more detailed guide, please refer to the [Getting Started guide](https://spark.kubeflow.org/en/latest/getting-started/).
+
+### Installation with Helm
+
+```bash
+# Add the Helm repository
+helm repo add --force-update spark-operator https://kubeflow.github.io/spark-operator
+
+# Install the operator into the spark-operator namespace and wait for deployments to be ready
+helm install spark-operator spark-operator/spark-operator \
+    --namespace spark-operator \
+    --create-namespace \
+    --wait
+
+# Create an example application in the default namespace
+kubectl apply -f https://raw.githubusercontent.com/kubeflow/spark-operator/refs/heads/master/examples/spark-pi.yaml
+
+# Get the status of the application
+kubectl get sparkapp spark-pi
+
+# Delete the application
+kubectl delete sparkapp spark-pi
+```
+
+### Installation with Kustomize
+
+An alternative install method is using kustomize manifests.
+For more information go to the [kustomize installation docs](docs/kustomize-installation.md).
+
+```bash
+git clone https://github.com/kubeflow/spark-operator.git && cd spark-operator
+kubectl apply -k config/default --server-side --force-conflicts
+
+# If you use kustomize to install, also install Spark application RBAC in the namespace where you will run Spark applications. 
+# The example below runs in the default namespace and uses the spark-operator-spark service account.
+kubectl -n default apply -k config/spark-rbac
+
+# Create an example application in the default namespace
+kubectl apply -f https://raw.githubusercontent.com/kubeflow/spark-operator/refs/heads/master/examples/spark-pi.yaml
+
+# Get the status of the application
+kubectl get sparkapp spark-pi
+
+# Delete the application
+kubectl delete sparkapp spark-pi
+```
+
+## Overview
+
+For a complete reference of the custom resource definitions, please refer to the [API Definition](docs/api-docs.md). For details on its design, please refer to the [Architecture](https://spark.kubeflow.org/en/latest/overview/#architecture). It requires Spark 2.3 and above that supports Kubernetes as a native scheduler backend.
+
+The Kubernetes Operator for Apache Spark currently supports the following list of features:
+
+- Supports Spark 2.3 and up.
+- Enables declarative application specification and management of applications through custom resources.
+- Automatically runs `spark-submit` on behalf of users for each `SparkApplication` eligible for submission.
+- Provides native [cron](https://en.wikipedia.org/wiki/Cron) support for running scheduled applications.
+- Supports customization of Spark pods beyond what Spark natively is able to do through the mutating admission webhook, e.g., mounting ConfigMaps and volumes, and setting pod affinity/anti-affinity.
+- Supports automatic application re-submission for updated `SparkApplication` objects with updated specification.
+- Supports automatic application restart with a configurable restart policy.
+- Supports automatic retries of failed submissions with optional linear back-off.
+- Supports collecting and exporting application-level metrics and driver/executor metrics to Prometheus.
 
 ## Project Status
 
-**Project status:** *alpha* 
+**Project status:** *beta*
 
-Spark Operator is still under active development and has not been extensively tested yet. Use at your own risk. Backward-compatibility is not supported for alpha releases.
+**Current API version:** *`v1beta2`*
+
+**If you are currently using the `v1beta1` version of the APIs in your manifests, please update them to use the `v1beta2` version by changing `apiVersion: "sparkoperator.k8s.io/<version>"` to `apiVersion: "sparkoperator.k8s.io/v1beta2"`. You will also need to delete the `previous` version of the CustomResourceDefinitions named `sparkapplications.sparkoperator.k8s.io` and `scheduledsparkapplications.sparkoperator.k8s.io`, and replace them with the `v1beta2` version either by installing the latest version of the operator or by running `kubectl create -f config/crd/bases`.**
 
 ## Prerequisites
 
-* Version >= 1.8 of Kubernetes.
+- [Kubernetes](https://kubernetes.io) >= 1.16
+- [Helm](https://helm.sh) >= 3
+- [kubectl](https://kubernetes.io/docs/reference/kubectl) >= 1.16
 
-Spark Operator relies on [Initializers](https://kubernetes.io/docs/admin/extensible-admission-controllers/#initializers) 
-and [garbage collection](https://kubernetes.io/docs/concepts/workloads/controllers/garbage-collection/) support for 
-custom resources which are in Kubernetes 1.8+.
+## Getting Started
 
-## Spark Operator
+For getting started with Spark operator, please refer to [Getting Started](https://spark.kubeflow.org/en/latest/getting-started/).
 
-Spark Operator is an experimental project aiming to make specifying and running [Spark](https://github.com/apache/spark) 
-applications as easy and idiomatic as running other workloads on Kubernetes. It requires Spark 2.3 and above that supports 
-Kubernetes as a native scheduler backend. Below are some example things that the Spark Operator is able to automate``:
-* Submitting applications on behalf of users so they don't need to deal with the submission process and the `spark-submit` command.
-* Mounting user-specified secrets into the driver and executor Pods.
-* Mounting user-specified ConfigMaps into the driver and executor Pods.
-* Mounting ConfigMaps carrying Spark or Hadoop configuration files that are to be put into a directory referred to by the 
-environment variable `SPARK_CONF_DIR` or `HADOOP_CONF_DIR` into the driver and executor Pods. Example use cases include 
-shipping a `log4j.properties` file for configuring logging and a `core-site.xml` file for configuring Hadoop and/or HDFS 
-access.
-* Creating a `NodePort` service for the Spark UI running on the driver so the UI can be accessed from outside the Kubernetes 
-cluster, without needing to use API server proxy or port forwarding.
-* Copying application logs to a central place, e.g., a GCS bucket, for bookkeeping, post-run checking, and analysis.
-* Automatically creating namespaces and setting up RBAC roles and quotas, and running users' applications in separate 
-namespaces for better resource isolation and quota management. 
+## User Guide
 
-To make such automation possible, Spark Operator uses the Kubernetes 
-[CustomResourceDefinition (CRD)](https://kubernetes.io/docs/tasks/access-kubernetes-api/extend-api-custom-resource-definitions/) and a corresponding CRD controller as well as an [initializer](https://kubernetes.io/docs/admin/extensible-admission-controllers/#initializers). The CRD controller setups the environment for an application and submits the application to run on behalf of the user, whereas the initializer handles customization of the Spark Pods.
+For detailed user guide and API documentation, please refer to [User Guide](https://spark.kubeflow.org/en/latest/user-guide/) and [API Specification](docs/api-docs.md).
 
-This approach is completely different than the one that has the submission client creates a CRD object. Having externally 
-created and managed CRD objects offer the following benefits:
-* Things like creating namespaces and setting up RBAC roles and resource quotas represent a separate concern and are better 
-done before applications get submitted.
-* With the external CRD controller submitting applications on behalf of users, they don't need to deal with the submission 
-process and the `spark-submit` command. Instead, the focus is shifted from thinking about commands to thinking about declarative 
-YAML files describing Spark applications that can be easily version controlled. 
-* Externally created CRD objects make it easier to integrate Spark application submission and monitoring with users' existing 
-pipelines and tooling on Kubernetes.
-* Internally created CRD objects are good for capturing and communicating application/executor status to the users, but not 
-for driver/executor pod configuration/customization as very likely it needs external input. Such external input most likely 
-need additional command-line options to get passed in.
+If you plan to run Spark workloads with Spark operator on [Alibaba Cloud Container Service for Kubernetes (ACK)](https://www.alibabacloud.com/product/kubernetes), also refer to the [ACK guide](https://www.alibabacloud.com/help/ack/ack-managed-and-ack-dedicated/use-cases/run-apache-spark-workloads-on-ack) for optimized configuration practices.
 
-Additionally, keeping the CRD implementation outside the Spark repository gives us a lot of flexibility in terms of 
-functionality to add to the CRD controller. We also have full control over code review and release process.
+If you are running Spark operator on Google Kubernetes Engine (GKE) and want to use Google Cloud Storage (GCS) and/or BigQuery for reading/writing data, also refer to the [GCP guide](https://spark.kubeflow.org/en/latest/user-guide/gcp.html).
 
-### Build and Installation
+## Blog Posts
 
-To get Spark Operator, run the following commands:
+- [[2025-03] Announcing the Kubeflow Spark Operator Benchmarking Results](https://blog.kubeflow.org/operators/benchmarking/performance/2025/03/15/kubeflow-spark-operator-benchmarks.html)
+- [[2024-04] Announcing the Kubeflow Spark Operator: Building a Stronger Spark on Kubernetes Community](https://blog.kubeflow.org/operators/2024/04/15/kubeflow-spark-operator.html)
 
-```bash
-make -p $GOPATH/src/k8s.io
-cd $GOPATH/src/k8s.io
-git clone git@github.com:GoogleCloudPlatform/spark-on-k8s-operator.git
-```
+## Version Matrix
 
-Spark Operator uses [Glide](http://glide.sh/) for dependency management. Please install Glide following the instruction on 
-the website if you don't have it available locally. To install the dependencies, run the following command:
+The following table lists the most recent few versions of the operator.
 
-```bash
-glide install --strip-vendor
-```  
+| Operator Version      | API Version | Kubernetes Version | Base Spark Version |
+| --------------------- | ----------- | ------------------ | ------------------ |
+| `v2.3.x`              | `v1beta2`   | 1.16+              | `4.0.0`            |
+| `v2.2.x`              | `v1beta2`   | 1.16+              | `3.5.5`            |
+| `v2.1.x`              | `v1beta2`   | 1.16+              | `3.5.3`            |
+| `v2.0.x`              | `v1beta2`   | 1.16+              | `3.5.2`            |
+| `v1beta2-1.6.x-3.5.0` | `v1beta2`   | 1.16+              | `3.5.0`            |
+| `v1beta2-1.5.x-3.5.0` | `v1beta2`   | 1.16+              | `3.5.0`            |
+| `v1beta2-1.4.x-3.5.0` | `v1beta2`   | 1.16+              | `3.5.0`            |
+| `v1beta2-1.3.x-3.1.1` | `v1beta2`   | 1.16+              | `3.1.1`            |
+| `v1beta2-1.2.3-3.1.1` | `v1beta2`   | 1.13+              | `3.1.1`            |
+| `v1beta2-1.2.2-3.0.0` | `v1beta2`   | 1.13+              | `3.0.0`            |
+| `v1beta2-1.2.1-3.0.0` | `v1beta2`   | 1.13+              | `3.0.0`            |
+| `v1beta2-1.2.0-3.0.0` | `v1beta2`   | 1.13+              | `3.0.0`            |
+| `v1beta2-1.1.x-2.4.5` | `v1beta2`   | 1.13+              | `2.4.5`            |
+| `v1beta2-1.0.x-2.4.4` | `v1beta2`   | 1.13+              | `2.4.4`            |
 
-Before building the Spark operator the first time, run the following commands to get the required Kubernetes code generators:
+## Developer Guide
 
-```bash
-go get -u k8s.io/code-generator/cmd/deepcopy-gen
-go get -u k8s.io/code-generator/cmd/defaulter-gen
-```
+For developing with Spark Operator, please refer to [Developer Guide](https://spark.kubeflow.org/en/latest/contributor-guide/).
 
-To build the Spark operator, run the following command:
+## Contributor Guide
 
-```bash
-make build
-```
+For contributing to Spark Operator, please refer to [Contributor Guide](CONTRIBUTING.md).
 
-To additionally build a Docker image of the Spark operator, run the following command:
+## Community
 
-```bash
-make image-tag=<image tag> image
-```
+- Join the [CNCF Slack Channel](https://www.kubeflow.org/docs/about/community/#kubeflow-slack-channels) and then join `#kubeflow-spark-on-kubernetes` Channel.
+- Check out our blog post [Announcing the Kubeflow Spark Operator: Building a Stronger Spark on Kubernetes Community](https://blog.kubeflow.org/operators/2024/04/15/kubeflow-spark-operator.html).
+- Join our monthly community meeting [Kubeflow Spark Operator Meeting Notes](https://bit.ly/3VGzP4n).
 
-To further push the Docker image to Docker hub, run the following command:
-console
+## Adopters
 
-```bash
-make image-tag=<image tag> push
-```
-
-### Deploying Spark Operator
-
-To deploy the Spark operator, run the following command:
-
-```bash
-kubectl create -f manifest/spark-operator.yaml 
-```
-
-### Configuring Spark Operator
-
-Spark Operator is typically deployed and run using `manifest/spark-operator.yaml` through a Kubernetes `Deployment`. 
-However, users can still run it outside a Kubernetes cluster and make it talk to the Kubernetes API server of a cluster 
-by specifying path to `kubeconfig`, which can be done using the `--kubeconfig` flag. 
-
-Spark Operator uses multiple workers in the initializer controller and the submission runner. The number of worker 
-threads to use in the two places are controlled using command-line flags `--initializer-threads` and `--submission-threads`, 
-respectively. The default values for both flags are 10 and 3, respectively.
-
-### Running the Example Spark Application
-
-To run the Spark Pi example, run the following command:
-
-```bash
-kubectl create -f examples/spark-pi.yaml
-```
-
-This will create a `SparkApplication` object named `spark-pi`. Check the object by running the following command:
-
-```bash
-kubectl get sparkapplications spark-pi -o=yaml
-```
-
-This will show something similar to the following:
-
-```yaml
-apiVersion: sparkoperator.k8s.io/v1alpha1
-kind: SparkApplication
-metadata:
-  ...
-spec:
-  deps: {}
-  driver:
-    cores: "0.1"
-    image: liyinan926/spark-driver:v2.3.0
-  executor:
-    image: liyinan926/spark-executor:v2.3.0
-    instances: 1
-    memory: 512m
-  mainApplicationFile: local:///opt/spark/examples/jars/spark-examples_2.11-2.3.0-SNAPSHOT.jar
-  mainClass: org.apache.spark.examples.SparkPi
-  mode: cluster
-  submissionByUser: false
-  type: Scala
-status:
-  appId: spark-app-example-666247082
-  applicationState:
-    errorMessage: ""
-    state: COMPLETED
-  completionTime: 2018-01-09T23:19:59Z
-  driverInfo:
-    podName: spark-app-example-a751930f68d23676aa1f0c2cee31f083-driver
-    webUIAddress: 35.225.33.10:30569
-    webUIPort: 30569
-    webUIServiceName: spark-app-example-ui-666247082
-  executorState:
-    spark-app-example-a751930f68d23676aa1f0c2cee31f083-exec-1: COMPLETED
-  submissionTime: 2018-01-09T23:19:43Z
-```
-
-### Using the Initializer
-
-The initializer works independently with or without the CRD controller. The initializer looks for certain custom 
-annotations on Spark driver and executor Pods to perform its tasks. To use the initializer without leveraging the CRD, 
-simply add the needed annotations to the driver and/or executor Pods using the following Spark configuration properties 
-when submitting your Spark applications through the `spark-submit` script.
-
-```
---conf spark.kubernetes.driver.annotations.[AnnotationName]=value
---conf spark.kubernetes.executor.annotations.[AnnotationName]=value
-```  
-
-Currently the following annotations are supported:
-
-|Annotation|Value|
-| ------------- | ------------- |
-|`sparkoperator.k8s.io/sparkConfigMap`|Name of the Kubernetes ConfigMap storing Spark configuration files (to which `SPARK_CONF_DIR` applies)|
-|`sparkoperator.k8s.io/hadoopConfigMap`|Name of the Kubernetes ConfigMap storing Hadoop configuration files (to which `HADOOP_CONF_DIR` applies)|
-|`sparkoperator.k8s.io/configMap.[ConfigMapName]`|Mount path of the ConfigMap named `ConfigMapName`|
-|`sparkoperator.k8s.io/GCPServiceAccount.[SeviceAccountSecretName]`|Mount path of the secret storing GCP service account credentials (typically a JSON key file) named `SeviceAccountSecretName`|
-
-When using the `SparkApplication` CRD to describe a Spark appliction, the annotations are automatically added by the CRD controller. 
-`manifest/spark-application-example-gcp-service-account.yaml` shows an example `SparkApplication` with a user-specified GCP service 
-account credential secret named `gcp-service-account` that is to be mounted into both the driver and executor containers. 
-The `SparkApplication` controller automatically adds the annotation `sparkoperator.k8s.io/GCPServiceAccount.gcp-service-account=/mnt/secrets` 
-to the driver and executor Pods. The initializer sees the annotation and automatically adds a secret volume into the pods.   
+Check out [adopters of Spark Operator](ADOPTERS.md).

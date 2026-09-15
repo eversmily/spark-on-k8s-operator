@@ -1,0 +1,389 @@
+#
+# Copyright 2024 The Kubeflow authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+suite: Test webhook rbac
+
+templates:
+  - webhook/rbac.yaml
+
+release:
+  name: spark-operator
+  namespace: spark-operator
+
+tests:
+  - it: Should not create webhook RBAC resources if `webhook.rbac.create` is false
+    set:
+      webhook:
+        rbac:
+          create: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: Should create webhook ClusterRole by default
+    documentIndex: 0
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          name: spark-operator-webhook
+
+  - it: Should create webhook ClusterRoleBinding by default
+    documentIndex: 1
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          name: spark-operator-webhook
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: spark-operator-webhook
+            namespace: spark-operator
+          count: 1
+      - equal:
+          path: roleRef
+          value:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: spark-operator-webhook
+
+  - it: Should add extra annotations to webhook ClusterRole if `webhook.rbac.annotations` is set
+    set:
+      webhook:
+        rbac:
+          annotations:
+            key1: value1
+            key2: value2
+    asserts:
+      - equal:
+          path: metadata.annotations.key1
+          value: value1
+      - equal:
+          path: metadata.annotations.key2
+          value: value2
+
+  - it: Should create role and rolebinding for webhook in release namespace
+    documentIndex: 2
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          name: spark-operator-webhook
+          namespace: spark-operator
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - events
+            verbs:
+              - create
+              - update
+              - patch
+
+  - it: Should create role and rolebinding for webhook in release namespace
+    documentIndex: 3
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          name: spark-operator-webhook
+          namespace: spark-operator
+      - contains:
+          path: subjects
+          content:
+            kind: ServiceAccount
+            name: spark-operator-webhook
+            namespace: spark-operator
+          count: 1
+      - equal:
+          path: roleRef
+          value:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: spark-operator-webhook
+
+  - it: Should not grant events permissions if `webhook.leaderElection.enable` is set to `false`
+    set:
+      webhook:
+        leaderElection:
+          enable: false
+    documentIndex: 2
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - events
+            verbs:
+              - create
+              - update
+              - patch
+
+  - it: Should grant events permissions and include webhook policyRules when release namespace is in `spark.jobNamespaces`
+    set:
+      spark:
+        jobNamespaces:
+          - spark-operator
+      webhook:
+        leaderElection:
+          enable: true
+    documentIndex: 2
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - events
+            verbs:
+              - create
+              - update
+              - patch
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - pods
+            verbs:
+              - list
+              - watch
+
+  - it: Should create roles and rolebindings for webhook in every spark job namespace if `spark.jobNamespaces` is set and does not contain empty string
+    set:
+      spark:
+        jobNamespaces:
+          - default
+          - spark
+    documentIndex: 4
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          name: spark-operator-webhook
+          namespace: default
+
+  - it: Should create roles and rolebindings for webhook in every spark job namespace if `spark.jobNamespaces` is set and does not contain empty string
+    set:
+      spark:
+        jobNamespaces:
+          - default
+          - spark
+    documentIndex: 5
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          name: spark-operator-webhook
+          namespace: default
+
+  - it: Should create roles and rolebindings for webhook in every spark job namespace if `spark.jobNamespaces` is set and does not contain empty string
+    set:
+      spark:
+        jobNamespaces:
+          - default
+          - spark
+    documentIndex: 6
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          name: spark-operator-webhook
+          namespace: spark
+
+  - it: Should create roles and rolebindings for webhook in every spark job namespace if `spark.jobNamespaces` is set and does not contain empty string
+    set:
+      spark:
+        jobNamespaces:
+          - default
+          - spark
+    documentIndex: 7
+    asserts:
+      - containsDocument:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          name: spark-operator-webhook
+          namespace: spark
+
+  # ---- RBAC rule content assertions (least privilege) ----
+  # These tests set spark.jobNamespaces to [""] to trigger cluster-wide
+  # policyRules inclusion in the ClusterRole (documentIndex 0).
+
+  - it: Should include webhook policyRules in ClusterRole when jobNamespaceSelector is set
+    set:
+      spark:
+        jobNamespaces:
+          - default
+        jobNamespaceSelector: "spark=enabled"
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - pods
+            verbs:
+              - list
+              - watch
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - get
+              - list
+              - watch
+
+  - it: Should grant pods list/watch in webhook ClusterRole
+    set:
+      spark:
+        jobNamespaces:
+          - ""
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - pods
+            verbs:
+              - list
+              - watch
+
+  - it: Should grant resourcequotas only list in webhook ClusterRole
+    set:
+      spark:
+        jobNamespaces:
+          - ""
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - ""
+            resources:
+              - resourcequotas
+            verbs:
+              - list
+
+  - it: Should grant sparkapplications and scheduledsparkapplications only get/list/watch in webhook ClusterRole
+    set:
+      spark:
+        jobNamespaces:
+          - ""
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - get
+              - list
+              - watch
+      - notContains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - create
+      - notContains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - update
+      - notContains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - patch
+      - notContains:
+          path: rules
+          content:
+            apiGroups:
+              - sparkoperator.k8s.io
+            resources:
+              - sparkapplications
+              - scheduledsparkapplications
+            verbs:
+              - delete
+
+  - it: Should not grant any permissions on sparkapplications/status or finalizers in webhook ClusterRole
+    set:
+      spark:
+        jobNamespaces:
+          - ""
+    documentIndex: 0
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            resources:
+              - sparkapplications/status
+          any: true
+      - notContains:
+          path: rules
+          content:
+            resources:
+              - sparkapplications/finalizers
+          any: true
+      - notContains:
+          path: rules
+          content:
+            resources:
+              - scheduledsparkapplications/status
+          any: true
+      - notContains:
+          path: rules
+          content:
+            resources:
+              - scheduledsparkapplications/finalizers
+          any: true
